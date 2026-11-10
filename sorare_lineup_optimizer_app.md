@@ -125,7 +125,7 @@ else:
     for index, row in df_mercato.iterrows():
         data_match = date_calendario[index % len(date_calendario)]
         
-        # Logica rigorosa per il contesto sosta/nazionali
+        # LOGICA COERENTE NAZIONALI VS CLUB
         if index % 2 == 0:
             contesto = "Nazionale (Sosta)"
             avversario = f"Nazionale Avversaria ({row['Nazione Nome']} vs Selezione avversaria)"
@@ -192,16 +192,15 @@ else:
             "Avversario", "Media Sorare", "IOSO (Indice Ottimizzato)"
         ]], use_container_width=True)
 
-    # --- 5. ALGORITMO DI SELEZIONE DELLA FORMAZIONE A 5 ---
+    # --- 5. ALGORITMO DI SELEZIONE FORMAZIONE A 5 ---
     st.markdown("---")
     st.subheader(f"🏆 Formazione Ideale a 5 Elementi (Selezionata per il: {data_selezionata})")
-    st.markdown("> **Regole ferree applicate:** 1 Portiere, 1 Difensore, 1 Centrocampista, 1 Attaccante + 1 Extra di movimento (con divieto assoluto di schierare portieri come extra).")
+    st.markdown("> **Regole ferree:** 1 Portiere, 1 Difensore, 1 Centrocampista, 1 Attaccante + 1 Extra di movimento (no portieri in extra).")
 
     formazione_ideale = []
     ruoli_obbligatori = ["Portiere", "Difensore", "Centrocampista", "Attaccante"]
     df_lavoro = df_filtrato_data.copy()
     
-    # Selezione ruoli obbligatori
     for r in ruoli_obbligatori:
         subset_ruolo = df_lavoro[df_lavoro["Ruolo"] == r]
         if not subset_ruolo.empty:
@@ -211,7 +210,6 @@ else:
         else:
             st.warning(f"⚠️ Nessun giocatore disponibile per il ruolo di [{r}] nella data del {data_selezionata}.")
 
-    # Selezione dell'Extra (escludendo i portieri)
     df_solo_movimento = df_lavoro[df_lavoro["Ruolo"] != "Portiere"]
     if not df_solo_movimento.empty:
         extra = df_solo_movimento.loc[df_solo_movimento["IOSO (Indice Ottimizzato)"].idxmax()]
@@ -221,7 +219,6 @@ else:
     else:
         st.warning("⚠️ Nessun giocatore di movimento idoneo disponibile per il ruolo Extra in questa data.")
 
-    # Render della formazione finale
     if formazione_ideale:
         df_formazione = pd.DataFrame(formazione_ideale)
         st.dataframe(df_formazione[[
