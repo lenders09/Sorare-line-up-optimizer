@@ -1,9 +1,11 @@
+Python
+
 import streamlit as st
 import pandas as pd
 import requests
 from datetime import datetime, timedelta
 
-# Configurazione della pagina Streamlit
+# Configurazione della pagina
 st.set_page_config(
     page_title="Sorare Opta Lineup Optimizer (IOSO)",
     page_icon="⚽",
@@ -11,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("⚽ Sorare Lineup Optimizer & Opta Match-up Analyzer")
-st.markdown("Sistema professionale di scouting e gestione formazioni ibrido (Sorare API + Metriche Opta + Calendari Nazionali/Club).")
+st.markdown("Sistema di scouting e gestione formazioni ibrido (Sorare API + Metriche Opta + Calendari).")
 
 # --- BARRA LATERALE: PARAMETRI IOSO ---
 st.sidebar.header("⚙️ Pesi Indice IOSO")
@@ -20,8 +22,7 @@ peso_duelli = st.sidebar.slider("Peso Differenziale Duelli", 0.1, 2.0, 0.8)
 peso_passaggi = st.sidebar.slider("Peso Precisione Passaggi", 0.1, 1.0, 0.4)
 peso_xg_xa = st.sidebar.slider("Peso Expected Goals/Assists (xG+xA)", 1.0, 20.0, 12.0)
 
-# --- 1. FUNZIONE DI RECUPERO GALLERIA SORARE ---
-@st.cache_data(ttl=300)
+# --- FUNZIONE API DI RECUPERO GALLERIA ---
 def carica_galleria_sorare(slug):
     url_sorare = "https://api.sorare.com/graphql"
     query = """
@@ -36,14 +37,8 @@ def carica_galleria_sorare(slug):
               player {
                 displayName
                 position
-                activeClub {
-                  name
-                  teamType
-                }
-                country {
-                  code
-                  name
-                }
+                activeClub { name }
+                country { name code }
               }
             }
           }
@@ -52,16 +47,17 @@ def carica_galleria_sorare(slug):
     }
     """ % slug
     
+    mappa_ruoli = {
+        "goalkeeper": "Portiere",
+        "defender": "Difensore",
+        "midfielder": "Centrocampista",
+        "forward": "Attaccante"
+    }
+    
     try:
-        response = requests.post(url_sorare, json={'query': query})
+        # Timeout di 5 secondi per evitare che l'app si blocchi all'infinito
+        response = requests.post(url_sorare, json={'query': query}, timeout=5)
         risposta_sorare = response.json()
-        
-        mappa_ruoli = {
-            "goalkeeper": "Portiere",
-            "defender": "Difensore",
-            "midfielder": "Centrocampista",
-            "forward": "Attaccante"
-        }
         
         giocatori_estratti = []
         if "data" in risposta_sorare and risposta_sorare["data"]["user"]:
@@ -70,12 +66,9 @@ def carica_galleria_sorare(slug):
                 p = c.get('player')
                 if p and 'displayName' in p:
                     nome = p['displayName']
-                    
                     club_obj = p.get('activeClub', {})
                     club_nome = club_obj.get('name', 'Club Sconosciuto') if club_obj else 'Club Sconosciuto'
-                    
                     country_obj = p.get('country', {})
-                    nazione_codice = country_obj.get('code', 'INT') if country_obj else 'INT'
                     nazione_nome = country_obj.get('name', 'Nazionale') if country_obj else 'Nazionale'
                     
                     rarita = c.get('rarityTyped', 'N/D')
@@ -87,45 +80,44 @@ def carica_galleria_sorare(slug):
                             "Giocatore": nome,
                             "Ruolo": ruolo_italiano,
                             "Club": club_nome,
-                            "Nazione Codice": nazione_codice,
                             "Nazione Nome": nazione_nome,
                             "Rarità": rarita
                         })
         return pd.DataFrame(giocatori_estratti)
-    except Exception as e:
+    except Exception:
         return pd.DataFrame()
 
-# --- 2. PULSANTE ESPLICITO DI SINCRONIZZAZIONE ---
+# --- PULSANTE DI SINCRONIZZAZIONE ---
 st.markdown("---")
 col_sync1, col_sync2 = st.columns([3, 1])
 with col_sync1:
-    st.info("🔄 Clicca sul pulsante per aggiornare e sincronizzare in tempo reale la tua galleria di carte direttamente dai server di Sorare.")
+    st.info("🔄 Clicca su **Sincronizza Galleria** per scaricare i dati da Sorare ed elaborare la formazione.")
 with col_sync2:
     sincronizza_btn = st.button("🔄 Sincronizza Galleria", use_container_width=True)
 
-if sincronizza_btn:
-    st.cache_data.clear()
-    st.rerun()
+# Gestione stato della sessione per non bloccare il caricamento iniziale
+if "df_mercato" not in st.session_state:
+    st.session_state["df_mercato"] = pd.DataFrame()
 
-# Caricamento dati
-df_mercato = carica_galleria_sorare(user_slug)
+if sincronizza_btn:
+    with st.spinner("Connessione a Sorare in corso..."):
+        st.session_state["df_mercato"] = carica_galleria_sorare(user_slug)
+
+df_mercato = st.session_state["df_mercato"]
 
 if df_mercato.empty:
-    st.warning("⚠️ Nessun giocatore trovato o errore di connessione con l'utente Sorare specificato.")
+    st.warning("⚠️ La galleria è vuota o non ancora sincronizzata. Premi il pulsante **Sincronizza Galleria** in alto per iniziare.")
 else:
-    st.success(f"✅ Galleria sincronizzata con successo! Trovate **{len(df_mercato)} carte** attive.")
+    st.success(f"✅ Galleria caricata! Trovate **{len(df_mercato)} carte** attive.")
 
-    # --- 3. GESTIONE CALENDARIO E COERENZA AVVERSARI (CLUB VS NAZIONALI) ---
+    # --- SIMULAZIONE CALENDARIO E AVVERSARI ---
     oggi = datetime.now()
-    date_calendario = [
-        (oggi + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(5)
-    ]
+    date_calendario = [(oggi + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(5)]
     
     dati_analizzati = []
     for index, row in df_mercato.iterrows():
         data_match = date_calendario[index % len(date_calendario)]
         
-        # LOGICA COERENTE NAZIONALI VS CLUB
         if index % 2 == 0:
             contesto = "Nazionale (Sosta)"
             avversario = f"Nazionale Avversaria ({row['Nazione Nome']} vs Selezione avversaria)"
@@ -133,17 +125,14 @@ else:
             contesto = "Campionato / Club"
             avversario = f"Club avversario ({row['Club']} vs Club avversario)"
         
-        # Metriche Opta e Sorare
         media_sorare_base = round(45.0 + (index * 1.5) % 30, 1)
         duelli_vinti = 8 + (index * 2) % 10
         duelli_persi = 3 + index % 5
         differenziale_duelli = duelli_vinti - duelli_persi
-        
         precisione_passaggi = round(80.0 + (index * 1.2) % 14, 1)
         xg_xa = round(0.2 + (index * 0.1) % 0.6, 2)
         difficolta_avversario = 1.05 if "Nazionale" in contesto else 1.0
         
-        # Calcolo Indice Proprietario IOSO
         ios_score = (
             media_sorare_base 
             + (differenziale_duelli * peso_duelli) 
@@ -171,31 +160,25 @@ else:
 
     df_completo = pd.DataFrame(dati_analizzati)
 
-    # --- 4. FILTRO PER DATA CENTRALE E VISIBILE ---
+    # --- SELETTORE DATA ---
     st.markdown("---")
     st.subheader("📅 Selettore Data e Turno di Game Week")
     
     date_disponibili = sorted(df_completo["Data Partita"].unique())
-    
-    data_selezionata = st.selectbox(
-        "Filtra per data di calendario (Visualizza solo i giocatori che scendono in campo in questo giorno):", 
-        date_disponibili
-    )
-
+    data_selezionata = st.selectbox("Seleziona la data:", date_disponibili)
     df_filtrato_data = df_completo[df_completo["Data Partita"] == data_selezionata].copy()
-    
-    st.write(f"In data **{data_selezionata}** risultano impegnati **{len(df_filtrato_data)} giocatori** della tua galleria.")
 
-    with st.expander("🔍 Mostra tutti i giocatori filtrati per questa data e i relativi avversari"):
+    st.write(f"In data **{data_selezionata}** risultano impegnati **{len(df_filtrato_data)} giocatori**.")
+
+    with st.expander("🔍 Mostra dettagli giocatori in questa data"):
         st.dataframe(df_filtrato_data[[
             "Giocatore", "Ruolo", "Contesto Impegno", "Squadra/Nazione in Campo", 
             "Avversario", "Media Sorare", "IOSO (Indice Ottimizzato)"
         ]], use_container_width=True)
 
-    # --- 5. ALGORITMO DI SELEZIONE FORMAZIONE A 5 ---
+    # --- FORMAZIONE A 5 ---
     st.markdown("---")
-    st.subheader(f"🏆 Formazione Ideale a 5 Elementi (Selezionata per il: {data_selezionata})")
-    st.markdown("> **Regole ferree:** 1 Portiere, 1 Difensore, 1 Centrocampista, 1 Attaccante + 1 Extra di movimento (no portieri in extra).")
+    st.subheader(f"🏆 Formazione Ideale a 5 Elementi ({data_selezionata})")
 
     formazione_ideale = []
     ruoli_obbligatori = ["Portiere", "Difensore", "Centrocampista", "Attaccante"]
@@ -207,8 +190,6 @@ else:
             migliore = subset_ruolo.loc[subset_ruolo["IOSO (Indice Ottimizzato)"].idxmax()]
             formazione_ideale.append(migliore.to_dict())
             df_lavoro = df_lavoro[df_lavoro["Giocatore"] != migliore["Giocatore"]]
-        else:
-            st.warning(f"⚠️ Nessun giocatore disponibile per il ruolo di [{r}] nella data del {data_selezionata}.")
 
     df_solo_movimento = df_lavoro[df_lavoro["Ruolo"] != "Portiere"]
     if not df_solo_movimento.empty:
@@ -216,8 +197,6 @@ else:
         extra_dict = extra.to_dict()
         extra_dict["Ruolo"] = f"Extra ({extra_dict['Ruolo']})"
         formazione_ideale.append(extra_dict)
-    else:
-        st.warning("⚠️ Nessun giocatore di movimento idoneo disponibile per il ruolo Extra in questa data.")
 
     if formazione_ideale:
         df_formazione = pd.DataFrame(formazione_ideale)
@@ -227,6 +206,4 @@ else:
         ]], use_container_width=True)
         
         totale_ios = df_formazione["IOSO (Indice Ottimizzato)"].sum()
-        st.success(f"🎯 **Indice IOSO Totale della Formazione:** {totale_ios:.1f} / 500.0")
-    else:
-        st.error("❌ Impossibile comporre la formazione per questa data specifica. Prova a selezionare un'altra data dal menu sopra.")
+        st.success(f"🎯 **Indice IOSO Totale:** {totale_ios:.1f} / 500.0")
